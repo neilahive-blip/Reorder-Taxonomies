@@ -1,0 +1,50 @@
+.rcr-tree, .rcr-children {
+    list-style: none;
+    padding-left: 20px;
+}
+
+.rcr-tree > li, .rcr-children > li {
+    margin: 5px 0;
+    padding: 10px;
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    cursor: move;
+    user-select: none;
+}
+
+.rcr-tree > li:hover, .rcr-children > li:hover {
+    border-color: #007cba;
+}
+
+.rcr-label {
+    pointer-events: none;
+    margin-left: 8px;
+}
+
+.rcr-controls {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #ccd0d4;
+}
+
+.rcr-taxonomy-selector {
+    margin-bottom: 20px;
+}
+
+.rcr-taxonomy-selector select {
+    margin-left: 10px;
+}
+.rcr-ghost {
+    opacity: 0.4;
+    background: #c8ebfb;
+}
+
+.rcr-chosen {
+    background: #e6f3fa;
+    transform: rotate(2deg);
+}
+
+.rcr-drag {
+    background: #e6f3fa;
+}
