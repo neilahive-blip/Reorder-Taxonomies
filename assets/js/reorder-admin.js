@@ -48,30 +48,51 @@
             },
             body: JSON.stringify(tree)
         });
-        if (!response.ok) throw new Error(`Failed to save ${taxonomy}: ${response.statusText}`);
-        return response.json();
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to save ${taxonomy}: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+        
+        const result = await response.json();
+        return result;
     }
 
     /**************************************************************************
-     * Build tree from DOM (used on Save)
+     * Build tree from DOM (FIXED - properly handles hierarchy)
      **************************************************************************/
     function buildTreeFromDOM(rootUl) {
         const res = [];
-        const children = rootUl ? rootUl.children : [];
+        const children = rootUl ? Array.from(rootUl.children) : [];
+        
         for (let i = 0; i < children.length; i++) {
             const li = children[i];
             if (!li || li.tagName !== 'LI') continue;
+            
             const id = li.getAttribute('data-id');
+            if (!id) continue;
+            
             const childUl = li.querySelector(':scope > ul.rcr-children');
-            const node = { id: parseInt(id, 10), children: [] };
-            if (childUl) node.children = buildTreeFromDOM(childUl);
+            const node = { 
+                id: parseInt(id, 10), 
+                children: [] 
+            };
+            
+            // Only process children if the UL has LI elements
+            if (childUl) {
+                const childLis = Array.from(childUl.children).filter(child => child.tagName === 'LI');
+                if (childLis.length > 0) {
+                    node.children = buildTreeFromDOM(childUl);
+                }
+            }
+            
             res.push(node);
         }
         return res;
     }
 
     /**************************************************************************
-     * Sortable initialization helper (FIXED - ensures DOM is ready)
+     * Sortable initialization helper (FIXED for empty containers)
      **************************************************************************/
     function attachSortableWhenReady(ulEl, options = {}) {
         if (!ulEl) return;
@@ -82,10 +103,12 @@
         function createInstance() {
             safeDestroySortable(ulEl);
             
-            // Double-check that we have LI elements
+            // Check if we have LI elements or if this is an empty container that should accept drops
             const hasListItems = ulEl.querySelector('li');
-            if (!hasListItems) {
-                debugLog('No LI elements found in UL, skipping Sortable initialization');
+            const isChildContainer = ulEl.classList.contains('rcr-children');
+            
+            if (!hasListItems && !isChildContainer) {
+                debugLog('No LI elements found in non-child UL, skipping Sortable initialization');
                 return false;
             }
             
@@ -106,27 +129,48 @@
                     ghostClass: 'rcr-ghost',
                     chosenClass: 'rcr-chosen',
                     dragClass: 'rcr-drag',
+                    // CRITICAL: Allow putting items into empty lists
+                    emptyInsertThreshold: 50,
                     
                     onStart: function(evt) {
                         try {
                             document.getSelection().removeAllRanges();
                         } catch (e) {}
                         debugLog('Drag start on', ulEl.className, 'item:', evt.item.textContent);
+                        
+                        // Add visual indicator for ALL child containers (even empty ones)
+                        document.querySelectorAll('.rcr-children').forEach(el => {
+                            el.classList.add('rcr-drop-zone-active');
+                        });
                     },
                     
-                    onUpdate: function(evt) {
-                        debugLog('Sortable updated on', ulEl.className);
+                    onAdd: function(evt) {
+                        debugLog('Item added to', ulEl.className);
+                        // If this was an empty container, ensure it stays visible
+                        ulEl.classList.remove('rcr-empty');
+                    },
+                    
+                    onRemove: function(evt) {
+                        debugLog('Item removed from', ulEl.className);
+                        // If container becomes empty, ensure it stays as a drop target
+                        if (ulEl.children.length === 0 && ulEl.classList.contains('rcr-children')) {
+                            ulEl.classList.add('rcr-empty');
+                        }
                     },
                     
                     onEnd: function(evt) {
-                        debugLog('Drag end on', ulEl.className, 'from:', evt.from.className, 'to:', evt.to?.className);
+                        debugLog('Drag ended');
+                        // Remove visual indicators
+                        document.querySelectorAll('.rcr-drop-zone-active').forEach(el => {
+                            el.classList.remove('rcr-drop-zone-active');
+                        });
                     },
                     
                     ...options
                 });
                 
                 ulEl._sortableInstance = instance;
-                debugLog('Sortable successfully attached to', ulEl.className, 'with', ulEl.children.length, 'items');
+                debugLog('Sortable successfully attached to', ulEl.className);
                 return true;
             } catch (err) {
                 console.error('[RCR] Sortable.create failed', err);
@@ -135,12 +179,7 @@
         }
 
         function attemptInit() {
-            if (ulEl.children.length > 0) {
-                debugLog('UL has children, attempting Sortable initialization for', ulEl.className);
-                return createInstance();
-            }
-            debugLog('UL has no children yet', ulEl.className);
-            return false;
+            return createInstance();
         }
 
         // Try immediately
@@ -150,75 +189,31 @@
             };
         }
 
-        // If no children yet, set up observation with multiple strategies
-        debugLog('Setting up observer for', ulEl.className);
-        
-        // Strategy 1: MutationObserver for DOM changes
-        observer = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
-                if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                    debugLog('DOM changed, checking for LIs in', ulEl.className);
-                    if (attemptInit()) {
-                        observer.disconnect();
-                    }
-                }
-            });
-        });
-        
-        observer.observe(ulEl, { 
-            childList: true, 
-            subtree: false 
-        });
-
-        // Strategy 2: Fallback timeout
-        timeoutId = setTimeout(() => {
-            debugLog('Fallback timeout reached for', ulEl.className);
-            observer.disconnect();
-            attemptInit();
-        }, 1000);
-
-        // Strategy 3: Also try on next animation frame (for React re-renders)
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                if (!ulEl._sortableInstance) {
-                    debugLog('RAF check for', ulEl.className);
-                    attemptInit();
-                }
-            });
-        });
-
         return {
-            disconnect: () => {
-                if (observer) observer.disconnect();
-                if (timeoutId) clearTimeout(timeoutId);
-                safeDestroySortable(ulEl);
-            }
+            disconnect: () => safeDestroySortable(ulEl)
         };
     }
 
     /**************************************************************************
-     * React components
+     * React components (FIXED - ensures empty containers are always available)
      **************************************************************************/
     function TreeNode({ node, isHierarchical, setTree }) {
         const ulRef = useRef(null);
 
-        // init sortable for nested ul - use useLayoutEffect for immediate DOM access
+        // Always show nested UL for hierarchical taxonomies, even if empty
+        const hasChildren = node.children && node.children.length > 0;
+        const showNestedUl = isHierarchical; // Always show for hierarchical taxonomies
+
+        // init sortable for nested ul
         useLayoutEffect(() => {
-            if (!ulRef.current) return;
+            if (!ulRef.current || !showNestedUl) return;
             
-            const handle = attachSortableWhenReady(ulRef.current, {
-                onUpdate: (evt) => {
-                    debugLog('Nested updated for parent', node.id);
-                }
-            });
+            const handle = attachSortableWhenReady(ulRef.current);
             
             return () => {
                 if (handle) handle.disconnect();
             };
-        }, [ulRef.current, node.children, node.id]);
-
-        const hasChildren = node.children && node.children.length > 0;
-        const showNestedUl = isHierarchical || hasChildren;
+        }, [ulRef.current, showNestedUl, node.id]);
 
         return wp.element.createElement(
             'li',
@@ -227,17 +222,18 @@
             showNestedUl
                 ? wp.element.createElement(
                     'ul',
-                    { className: 'rcr-children', ref: ulRef },
-                    hasChildren
-                        ? node.children.map((child) =>
-                            wp.element.createElement(TreeNode, { 
-                                key: child.id, 
-                                node: child, 
-                                isHierarchical, 
-                                setTree 
-                            })
-                        )
-                        : null
+                    { 
+                        className: `rcr-children ${!hasChildren ? 'rcr-empty' : ''}`,
+                        ref: ulRef 
+                    },
+                    hasChildren && node.children.map((child) =>
+                        wp.element.createElement(TreeNode, { 
+                            key: child.id, 
+                            node: child, 
+                            isHierarchical, 
+                            setTree 
+                        })
+                    )
                 )
                 : null
         );
@@ -249,6 +245,7 @@
         const [tree, setTree] = useState([]);
         const [loading, setLoading] = useState(true);
         const [saving, setSaving] = useState(false);
+        const [error, setError] = useState(null);
         const rootUlRef = useRef(null);
         const [sortableReady, setSortableReady] = useState(false);
 
@@ -256,80 +253,70 @@
         useEffect(() => {
             if (!taxonomy) return;
             setLoading(true);
+            setError(null);
             setSortableReady(false);
+            
             fetchTree(taxonomy)
                 .then((data) => {
                     setTree(Array.isArray(data) ? data : []);
-                    // Small delay to ensure DOM is updated before initializing Sortable
-                    setTimeout(() => setSortableReady(true), 100);
+                    setTimeout(() => setSortableReady(true), 200);
                 })
                 .catch((err) => {
                     console.error('[RCR] Failed to fetch terms for', taxonomy, err);
+                    setError(err.message);
                     setTree([]);
-                    setSortableReady(false);
                 })
                 .finally(() => setLoading(false));
         }, [taxonomy]);
 
-        // Attach root Sortable - use useLayoutEffect and proper dependencies
+        // Attach root Sortable
         useLayoutEffect(() => {
             if (!rootUlRef.current || !sortableReady || tree.length === 0) {
                 return;
             }
             
-            debugLog('Initializing root Sortable, tree length:', tree.length, 'UL children:', rootUlRef.current.children.length);
-            
-            const handle = attachSortableWhenReady(rootUlRef.current, {
-                onUpdate: (evt) => {
-                    debugLog('Root order updated');
-                },
-                onAdd: (evt) => {
-                    debugLog('Item added to root');
-                },
-                onRemove: (evt) => {
-                    debugLog('Item removed from root');
-                }
-            });
+            debugLog('Initializing root Sortable');
+            const handle = attachSortableWhenReady(rootUlRef.current);
             
             return () => {
-                debugLog('Cleaning up root sortable');
                 if (handle) handle.disconnect();
             };
-        }, [taxonomy, tree, sortableReady]); // Added sortableReady as dependency
-
-        // Re-initialize Sortable when tree data changes after save
-        useEffect(() => {
-            if (!saving && tree.length > 0) {
-                // Small delay to ensure DOM is updated with new tree data
-                const timer = setTimeout(() => {
-                    setSortableReady(true);
-                }, 50);
-                return () => clearTimeout(timer);
-            }
-        }, [saving, tree]);
+        }, [taxonomy, tree, sortableReady]);
 
         async function onSave() {
             setSaving(true);
+            setError(null);
+            
             try {
                 const rootUl = rootUlRef.current;
                 if (!rootUl) throw new Error('Root UL not found');
+                
+                debugLog('Building tree from DOM...');
                 const payload = buildTreeFromDOM(rootUl);
-                await saveTree(payload, taxonomy);
+                debugLog('Payload to save:', payload);
+                
+                const result = await saveTree(payload, taxonomy);
+                debugLog('Save result:', result);
+                
+                // Refresh the tree to get the updated structure from server
                 const refreshed = await fetchTree(taxonomy);
                 setTree(refreshed);
-                alert('Order saved successfully!');
-                debugLog(`${taxonomy} order saved.`);
+                
+                // Re-initialize sortable after refresh
+                setTimeout(() => setSortableReady(true), 100);
+                
+                alert(result.message || 'Order and hierarchy saved successfully!');
+                
             } catch (err) {
                 console.error('[RCR] Save failed', err);
-                alert('Save failed. Check console for details.');
+                setError(err.message);
+                alert('Save failed: ' + err.message);
             } finally {
                 setSaving(false);
             }
         }
 
-        const isHierarchical = availableTaxonomies[taxonomy] && typeof availableTaxonomies[taxonomy] === 'object'
-            ? availableTaxonomies[taxonomy].hierarchical
-            : true;
+        const isHierarchical = true; // Since we're only dealing with hierarchical taxonomies
 
         return wp.element.createElement('div', { className: 'rcr-container' },
             wp.element.createElement('div', { className: 'rcr-taxonomy-selector' },
@@ -339,12 +326,17 @@
                     value: taxonomy,
                     onChange: (e) => setTaxonomy(e.target.value)
                 },
-                    Object.entries(availableTaxonomies).map(([key, infoOrLabel]) => {
-                        const label = typeof infoOrLabel === 'string' ? infoOrLabel : (infoOrLabel.label || key);
+                    Object.entries(availableTaxonomies).map(([key, label]) => {
                         return wp.element.createElement('option', { key, value: key }, label);
                     })
                 )
             ),
+            
+            error && wp.element.createElement('div', { 
+                className: 'notice notice-error', 
+                style: { padding: '10px', margin: '10px 0', background: '#f8d7da', border: '1px solid #f5c6cb' } 
+            }, error),
+            
             loading
                 ? wp.element.createElement('p', null, 'Loading...')
                 : tree.length === 0
@@ -352,11 +344,23 @@
                     : wp.element.createElement(
                         React.Fragment,
                         null,
-                        wp.element.createElement('p', { style: { marginBottom: '15px', fontStyle: 'italic' } }, 
-                            'Drag and drop terms to reorder. All levels are draggable.'
-                        ),
-                        !sortableReady && wp.element.createElement('p', { style: { color: '#d63638' } }, 
-                            'Initializing drag and drop...'
+                        wp.element.createElement('div', { 
+                            className: 'rcr-instructions',
+                            style: { 
+                                marginBottom: '15px', 
+                                padding: '10px',
+                                background: '#f0f6fc',
+                                border: '1px solid #c3c4c7',
+                                borderRadius: '4px'
+                            } 
+                        }, 
+                            wp.element.createElement('h3', { style: { margin: '0 0 8px 0' } }, 'How to reorganize:'),
+                            wp.element.createElement('ul', { style: { margin: '0', paddingLeft: '20px' } },
+                                wp.element.createElement('li', null, 'Drag terms up/down to reorder'),
+                                wp.element.createElement('li', null, 'Drag terms into other terms to nest them'),
+                                wp.element.createElement('li', null, 'Drag nested terms to root level to make them top-level'),
+                                wp.element.createElement('li', null, 'Empty term containers will highlight as drop zones')
+                            )
                         ),
                         wp.element.createElement('ul', { 
                             className: 'rcr-tree', 
@@ -377,7 +381,7 @@
                     className: 'button button-primary',
                     onClick: onSave,
                     disabled: saving || loading || tree.length === 0
-                }, saving ? 'Saving…' : 'Save Order')
+                }, saving ? 'Saving…' : 'Save Order & Hierarchy')
             )
         );
     }
@@ -387,7 +391,7 @@
         const root = document.getElementById('rcr-root');
         if (root) {
             wp.element.render(wp.element.createElement(App), root);
-            debugLog('RCR App initialized');
+            debugLog('RCR App initialized with fixed hierarchy support');
         }
     });
 })(window.wp, window.rcr_params);

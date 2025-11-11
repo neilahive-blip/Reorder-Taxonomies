@@ -1,6 +1,8 @@
 .rcr-tree, .rcr-children {
     list-style: none;
     padding-left: 20px;
+    min-height: 10px;
+    transition: background-color 0.2s ease;
 }
 
 .rcr-tree > li, .rcr-children > li {
@@ -11,15 +13,61 @@
     border-radius: 4px;
     cursor: move;
     user-select: none;
+    transition: all 0.2s ease;
 }
 
 .rcr-tree > li:hover, .rcr-children > li:hover {
     border-color: #007cba;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .rcr-label {
     pointer-events: none;
     margin-left: 8px;
+}
+
+/* CRITICAL: Empty child containers must be visible and accept drops */
+.rcr-children.rcr-empty {
+    min-height: 40px;
+    background: #f6f7f7;
+    border: 2px dashed #ccd0d4;
+    border-radius: 4px;
+    margin: 5px 0;
+    position: relative;
+}
+
+.rcr-children.rcr-empty:before {
+    content: "Drop zone for child terms";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #666;
+    font-size: 12px;
+    font-style: italic;
+}
+
+.rcr-children.rcr-drop-zone-active {
+    background: #f0f6fc;
+    border: 2px dashed #007cba;
+    border-color: #007cba;
+}
+
+/* Visual feedback for drag operations */
+.rcr-ghost {
+    opacity: 0.6;
+    background: #c8ebfb;
+    transform: rotate(2deg);
+}
+
+.rcr-chosen {
+    background: #e6f3fa;
+    border-color: #007cba;
+}
+
+.rcr-drag {
+    background: #e6f3fa;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
 .rcr-controls {
@@ -34,17 +82,4 @@
 
 .rcr-taxonomy-selector select {
     margin-left: 10px;
-}
-.rcr-ghost {
-    opacity: 0.4;
-    background: #c8ebfb;
-}
-
-.rcr-chosen {
-    background: #e6f3fa;
-    transform: rotate(2deg);
-}
-
-.rcr-drag {
-    background: #e6f3fa;
 }

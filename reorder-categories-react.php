@@ -166,22 +166,44 @@ function rcr_save_terms_order($request) {
         $order = 0;
         foreach ($items as $item) {
             if (empty($item['id'])) continue;
+            
             $term_id = intval($item['id']);
+            
+            // Update menu order
             update_term_meta($term_id, 'menu_order', $order);
-            $current = get_term($term_id, $taxonomy);
-            if ($current && intval($current->parent) !== intval($parent_id)) {
-                wp_update_term($term_id, $taxonomy, ['parent' => intval($parent_id)]);
+            
+            // Update parent if changed
+            $current_term = get_term($term_id, $taxonomy);
+            if (!is_wp_error($current_term) && intval($current_term->parent) !== intval($parent_id)) {
+                $update_result = wp_update_term($term_id, $taxonomy, ['parent' => intval($parent_id)]);
+                
+                if (is_wp_error($update_result)) {
+                    error_log('RCR: Failed to update term parent: ' . $update_result->get_error_message());
+                }
             }
-            if (!empty($item['children'])) {
+            
+            // Process children recursively
+            if (!empty($item['children']) && is_array($item['children'])) {
                 $update_recursive($item['children'], $term_id);
             }
+            
             $order++;
         }
     };
 
-    $update_recursive($data, 0);
-
-    return rest_ensure_response(['success' => true]);
+    try {
+        $update_recursive($data, 0);
+        
+        // Clear term cache to ensure changes are visible
+        clean_term_cache(array(), $taxonomy);
+        
+        return rest_ensure_response([
+            'success' => true,
+            'message' => 'Order and hierarchy saved successfully.'
+        ]);
+    } catch (Exception $e) {
+        return new WP_Error('save_failed', 'Failed to save order: ' . $e->getMessage(), ['status' => 500]);
+    }
 }
 
 /**
